@@ -8,15 +8,15 @@ more so.
 
 ## Seckit module helper.
 Prepares hashes, or a nonce for logged-in users, to allow CSP protection for
-scripts. Requires the seckit module, with [this patch](seckit-patch).
-(Note, the patch might soon be replaced, check status on [the ticket](patch-ticket)).
+scripts. Requires the seckit module, with [this patch](https://www.drupal.org/files/issues/2021-09-13/2844205-alter-csp-directives-10.patch).
+(Note, the patch might soon be replaced, check status on [the ticket](https://www.drupal.org/project/seckit/issues/2844205#comment-14455849)).
 
 This is necessary to avoid rules allowing the use of 'eval' or 'unsafe-inline',
 for 'script-src' which undermine the point of using the seckit module.
 
 Note that it is recommended to use 'unsafe-inline' if a nonce or a hash is
 included, as this will work with CSP level 1 browsers but will be ignored by
-CSP level 2 browsers. [Not the best reference](unsafe-inline)
+CSP level 2 browsers. [Not the best reference](https://github.com/mozilla/http-observatory/issues/88)
 
 For logged-in users, where the page is not cached, a __nonce__ (Number used ONCE)
 must be generated for each request, but can be used for all of the scripts.
@@ -51,7 +51,3 @@ removing inline scripts is not an option" ([source](https://blog.mozilla.org/sec
 ['strict-dynamic'](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/script-src#strict-dynamic) overrides any allowed domains in the seckit configuration, but
 only for browsers which implement CSP-v3. So a nonce or hash is necessary for
 all scripts.
-
-[seckit-patch]: https://www.drupal.org/files/issues/2021-09-13/2844205-alter-csp-directives-10.patch
-[patch-ticket]: https://www.drupal.org/project/seckit/issues/2844205#comment-14455849
-[unsafe-inline]: https://github.com/mozilla/http-observatory/issues/88
