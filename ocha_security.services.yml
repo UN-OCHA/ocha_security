@@ -1,0 +1,13 @@
+services:
+  ocha_security.asset.resolver:
+    class: Drupal\ocha_security\Asset\OchaSecurityAssetResolver
+    decorates: asset.resolver
+    decoration_priority: 9
+    public: false
+    arguments: ['@ocha_security.asset.resolver.inner']
+  ocha_security.session_configuration:
+    class: Drupal\ocha_security\Session\OchaSecuritySessionConfiguration
+    decorates: session_configuration
+    decoration_priority: 9
+    public: false
+    arguments: ['@ocha_security.session_configuration.inner']

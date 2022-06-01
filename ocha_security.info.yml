@@ -1,0 +1,5 @@
+name: OCHA Security
+type: module
+description: 'Helper for CSP and security configuration'
+package: OCHA
+core_version_requirement: ^9 || ^10

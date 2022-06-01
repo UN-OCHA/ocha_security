@@ -1,0 +1,228 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations and seckit helper functions.
+ */
+
+use Drupal\ocha_security\Element\OchaSecurityHtmlPreRender;
+
+/**
+ * Implements hook_element_info_alter().
+ */
+function ocha_security_element_info_alter(array &$info) {
+  if (!ocha_security_sends_csp_header()) {
+    return;
+  }
+  array_unshift($info['html_tag']['#pre_render'], [
+    OchaSecurityHtmlPreRender::class,
+    'preRender',
+  ]);
+}
+
+/**
+ * Implements hook_page_attachments_alter().
+ */
+function ocha_security_page_attachments_alter(array &$page) {
+  if (!ocha_security_sends_csp_header()) {
+    return;
+  }
+  foreach ($page['#attached']['html_head'] as &$attachment) {
+    if (ocha_security_can_use_nonce()) {
+      ocha_security_set_nonce($attachment[0]);
+    }
+    else {
+      ocha_security_add_hash($attachment[0]);
+    }
+  }
+}
+
+/**
+ * Implements hook_seckit_options_alter().
+ *
+ * Make some modifications to the CSP that are not supported by the seckit UI.
+ */
+function ocha_security_seckit_csp_directives_alter(&$directives) {
+  $directives['script-src'] = $directives['script-src'] ?? '';
+
+  if (ocha_security_can_use_nonce()) {
+    $directives['script-src'] .= " 'nonce-" . ocha_security_get_nonce() . "' 'strict-dynamic'";
+  }
+  else {
+    // Get hashes from store. This can be cached.
+    $hashes = ocha_security_hash_store();
+    if (!empty($hashes)) {
+      $directives['script-src'] .= " '" . implode("' '", $hashes) . "'";
+    }
+  }
+
+  // Add a rule for the base-uri.
+  $directives['base-uri'] = "base-uri 'self'";
+}
+
+/**
+ * Check if we can use nonces for the Content Security Policy.
+ *
+ * If we don't have a logged in user, we are most probably in a cached context
+ * and nonces can't be used because they have to vary with every request.
+ *
+ * @return bool
+ *   TRUE if nonces can be used, FALSE otherwhise.
+ */
+function ocha_security_can_use_nonce() {
+  return \Drupal::currentUser()->isAuthenticated();
+}
+
+/**
+ * Checks whether a CSP header should be sent.
+ *
+ * @return bool
+ *   TRUE if Seckit is configured to send a CSP header, FALSE otherwise.
+ */
+function ocha_security_sends_csp_header() {
+  $config = \Drupal::config('seckit.settings');
+  return $config->get('seckit_xss.csp.checkbox');
+}
+
+/**
+ * Get a nonce for CSP validation.
+ *
+ * A single nonce will be created per request.
+ *
+ * @return string
+ *   A randomly generated nonce.
+ *
+ * @see ocha_security_seckit_options_alter()
+ * @see ocha_security_js_alter()
+ */
+function ocha_security_get_nonce() {
+  $nonce = &drupal_static(__FUNCTION__, NULL);
+  if ($nonce === NULL) {
+    $length = 32;
+
+    if (function_exists('random_bytes')) {
+      $nonce = bin2hex(random_bytes($length));
+    }
+    elseif (function_exists('mcrypt_create_iv')) {
+      $nonce = bin2hex(mcrypt_create_iv($length, MCRYPT_DEV_URANDOM));
+    }
+    elseif (function_exists('openssl_random_pseudo_bytes')) {
+      $nonce = bin2hex(openssl_random_pseudo_bytes($length));
+    }
+    else {
+      // Leave a message.
+      $message = 'No function exists for preparing nonce';
+      \Drupal::logger('ocha_security')->warning($message);
+    }
+  }
+  return $nonce;
+}
+
+/**
+ * Get a hash for CSP validation of inline code.
+ *
+ * @param string $string
+ *   The inline code for which the hash should be generated.
+ *
+ * @return string|null
+ *   A hash of the inline code.
+ */
+function ocha_security_get_hash($string) {
+  if (empty($string)) {
+    return NULL;
+  }
+  return 'sha256-' . base64_encode(hash('sha256', $string, TRUE));
+}
+
+/**
+ * Get a hash for CSP validation of local files.
+ *
+ * @param string $url
+ *   The URL of the file for which the hash should be generated.
+ *
+ * @return string|null
+ *   A hash of the url.
+ */
+function ocha_security_get_hash_from_url($url) {
+  global $base_url;
+  if (empty($url)) {
+    return NULL;
+  }
+  if (strpos($url, 'http') === 0 && strpos($url, $base_url) === FALSE) {
+    // Only do this for local files.
+    return NULL;
+  }
+  $url = str_replace($base_url, '', $url);
+  $url = str_replace(\Drupal::state()->get('system.css_js_query_string'), '', $url);
+  $url = trim($url, '/?');
+
+  if (!file_exists($url)) {
+    return NULL;
+  }
+
+  return 'sha256-' . base64_encode(hash_file('sha256', $url, TRUE));
+}
+
+/**
+ * Set a nonce attribute on a given attachment or element.
+ *
+ * @param array $asset
+ *   An attachment or element.
+ */
+function ocha_security_set_nonce(array &$asset) {
+  $calling_function = debug_backtrace(!DEBUG_BACKTRACE_PROVIDE_OBJECT | DEBUG_BACKTRACE_IGNORE_ARGS, 2)[1]['function'];
+  if (!array_key_exists('#tag', $asset) || $asset['#tag'] != 'script') {
+    return;
+  }
+  $attributes = array_key_exists('#attributes', $asset) ? $asset['#attributes'] : [];
+  if (array_key_exists('nonce', $attributes)) {
+    return;
+  }
+  $attributes['nonce'] = ocha_security_get_nonce();
+  $attributes['wherefrom'] = 'ModuleSetNonce';
+  $attributes['calledfrom'] = $calling_function;
+  $asset['#attributes'] = $attributes;
+}
+
+/**
+ * Store a hash for a given attachment or element.
+ *
+ * @param array $asset
+ *   An attachment or element.
+ *
+ * @see ocha_security_hash_store()
+ */
+function ocha_security_add_hash(array &$asset) {
+  if (!array_key_exists('#tag', $asset) || $asset['#tag'] != 'script') {
+    return;
+  }
+  $hash = NULL;
+  $attributes = array_key_exists('#attributes', $asset) ? $asset['#attributes'] : [];
+  if (!empty($attributes['src'])) {
+    $hash = ocha_security_get_hash_from_url($attributes['src']);
+  }
+  elseif (!empty($asset['#value'])) {
+    $hash = ocha_security_get_hash($asset['#value']);
+  }
+  if (!empty($hash)) {
+    ocha_security_hash_store($hash);
+  }
+}
+
+/**
+ * Store generated hashes.
+ *
+ * @param string $hash
+ *   A hash value to store.
+ *
+ * @return void|array
+ *   Either void or the array with all hashes generated during the current
+ *   request.
+ */
+function ocha_security_hash_store($hash = NULL) {
+  $hashes = &drupal_static(__FUNCTION__, []);
+  if ($hash === NULL) {
+    return $hashes;
+  }
+  $hashes[] = $hash;
+}
